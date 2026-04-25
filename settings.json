@@ -1,0 +1,38 @@
+{
+  "backup_all": {
+    "schedule": {
+      "enabled": false,
+      "cron": "0 3 * * *"
+    }
+  },
+  "boot": {
+    "destination": "",
+    "compression": true,
+    "backups_to_keep": 3,
+    "schedule": {
+      "enabled": false,
+      "cron": "0 3 * * *"
+    }
+  },
+  "appdata": {
+    "destination": "",
+    "compression": false,
+    "exclude_dirs": [],
+    "stop_containers": [],
+    "backups_to_keep": 5,
+    "schedule": {
+      "enabled": false,
+      "cron": "0 4 * * *"
+    }
+  },
+  "libvirt": {
+    "source": "/etc/libvirt",
+    "destination": "",
+    "compression": false,
+    "backups_to_keep": 5,
+    "schedule": {
+      "enabled": false,
+      "cron": "0 5 * * *"
+    }
+  }
+}

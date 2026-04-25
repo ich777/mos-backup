@@ -1,0 +1,91 @@
+#!/bin/bash
+
+case "$1" in
+  --status)
+    BOOT_RUNNING=false
+    APPDATA_RUNNING=false
+    LIBVIRT_RUNNING=false
+
+    if [ -f "/var/run/mos-backup-boot.pid" ] && kill -0 "$(cat "/var/run/mos-backup-boot.pid")" 2>/dev/null ; then
+      BOOT_RUNNING=true
+    else
+      rm -f "/var/run/mos-backup-boot.pid" 2>/dev/null
+    fi
+
+    if [ -f "/var/run/mos-backup-appdata.pid" ] && kill -0 "$(cat "/var/run/mos-backup-appdata.pid")" 2>/dev/null ; then
+      APPDATA_RUNNING=true
+    else
+      rm -f "/var/run/mos-backup-appdata.pid" 2>/dev/null
+    fi
+
+    if [ -f "/var/run/mos-backup-libvirt.pid" ] && kill -0 "$(cat "/var/run/mos-backup-libvirt.pid")" 2>/dev/null ; then
+      LIBVIRT_RUNNING=true
+    else
+      rm -f "/var/run/mos-backup-libvirt.pid" 2>/dev/null
+    fi
+
+    echo "{\"running\": ${BOOT_RUNNING}, \"boot\": ${BOOT_RUNNING}, \"appdata\": ${APPDATA_RUNNING}, \"libvirt\": ${LIBVIRT_RUNNING}}"
+    ;;
+
+  --appdata-dirs)
+    SOURCE=$(jq -r '.appdata // empty' "/boot/config/docker.json" 2>/dev/null)
+
+    if [ -z "$SOURCE" ] || [ ! -d "$SOURCE" ] ; then
+      echo "[]"
+      exit 0
+    fi
+
+    DIRS=()
+    while IFS= read -r DIR_NAME ; do
+      DIRS+=("$DIR_NAME")
+    done < <(cd "$SOURCE" && find . -maxdepth 1 -type d ! -name '.' -printf '%f\n' | sort)
+
+    # Build JSON array
+    echo -n "["
+    for i in "${!DIRS[@]}" ; do
+      [ "$i" -gt 0 ] && echo -n ","
+      echo -n "\"${DIRS[$i]}\""
+    done
+    echo "]"
+    ;;
+
+  --containers)
+    SOURCE=$(jq -r '.appdata // empty' "/boot/config/docker.json" 2>/dev/null)
+
+    if [ -z "$SOURCE" ] || [ ! -d "$SOURCE" ] ; then
+      echo "[]"
+      exit 0
+    fi
+
+    RUNNING_IDS=$(docker ps -q 2>/dev/null)
+    if [ -z "$RUNNING_IDS" ] ; then
+      echo "[]"
+      exit 0
+    fi
+
+    # Find running containers which have dirs in appdata path
+    MATCHED=()
+    for CID in $RUNNING_IDS ; do
+      CNAME=$(docker inspect --format '{{.Name}}' "$CID" 2>/dev/null | sed 's|^/||')
+      [ -z "$CNAME" ] && continue
+      MOUNTS=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{"\n"}}{{end}}{{end}}' "$CID" 2>/dev/null)
+      if echo "$MOUNTS" | grep -q "^${SOURCE}/" ; then
+        MATCHED+=("$CNAME")
+      fi
+    done
+
+    # Sort and build JSON array
+    IFS=$'\n' SORTED=($(printf '%s\n' "${MATCHED[@]}" | sort)); unset IFS
+    echo -n "["
+    for i in "${!SORTED[@]}" ; do
+      [ "$i" -gt 0 ] && echo -n ","
+      echo -n "\"${SORTED[$i]}\""
+    done
+    echo "]"
+    ;;
+
+  *)
+    echo "{\"error\": \"Unknown argument: $1. Use --status, --appdata-dirs or --containers\"}"
+    exit 1
+    ;;
+esac

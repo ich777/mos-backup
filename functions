@@ -1,0 +1,350 @@
+#!/bin/bash
+
+# Set variable
+PLG_DIR="/boot/optional/plugins/backup"
+
+# Get PID file for a backup type
+get_pid_file() {
+  local TYPE="$1"
+  case "$TYPE" in
+    boot)    echo "/var/run/mos-backup-boot.pid" ;;
+    appdata) echo "/var/run/mos-backup-appdata.pid" ;;
+    libvirt) echo "/var/run/mos-backup-libvirt.pid" ;;
+    *)       echo "/var/run/mos-backup-${TYPE}.pid" ;;
+  esac
+}
+
+# Lock function, including check if process is already running for backup type
+create_lock() {
+  local TYPE="$1"
+  local PID_FILE=$(get_pid_file "$TYPE")
+  if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null ; then
+    return 1
+  fi
+  echo $$ > "$PID_FILE"
+  trap "rm -f '$PID_FILE'" EXIT
+  return 0
+}
+
+# Rotate boot Backup function
+rotate_boot_backups() {
+  local DIR="$1"
+  local KEEP="$2"
+  [ -z "$KEEP" ] || [ "$KEEP" -lt 1 ] && KEEP=3
+
+  local COUNT=$(ls -1 "${DIR}"/boot-backup-*.tar* 2>/dev/null | wc -l)
+  if [ "$COUNT" -gt "$KEEP" ] ; then
+    local TO_DELETE=$((COUNT - KEEP))
+    ls -1 "${DIR}"/boot-backup-*.tar* 2>/dev/null | sort | head -n "$TO_DELETE" | while read -r FILE ; do
+      rm -f "$FILE"
+    done
+  fi
+}
+
+
+# boot Backup function
+run_boot_backup() {
+  if ! create_lock "boot" ; then
+    return 1
+  fi
+
+  local SETTINGS=$(jq -r '.boot // empty' $PLG_DIR/settings.json)
+  if [ -z "$SETTINGS" ] ; then
+    return 1
+  fi
+
+  local DESTINATION=$(echo "$SETTINGS" | jq -r '.destination // empty')
+  local COMPRESSION=$(echo "$SETTINGS" | jq -r '.compression // false')
+  local BACKUPS_TO_KEEP=$(echo "$SETTINGS" | jq -r '.backups_to_keep // 2')
+
+  if [ -z "$DESTINATION" ] ; then
+    return 1
+  fi
+  mkdir -p "$DESTINATION"
+
+  local TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+  local TAR_FLAGS="cf"
+  local ARCHIVE_NAME="boot-backup-${TIMESTAMP}.tar"
+
+  # Set tar flags
+  if [ "$COMPRESSION" = "true" ] ; then
+    TAR_FLAGS="czf"
+    ARCHIVE_NAME="boot-backup-${TIMESTAMP}.tar.gz"
+  fi
+
+  local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
+
+  notify -t "Backup" -m "Starting boot backup" -p "normal"
+
+  tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C / boot 2>/dev/null
+  rotate_boot_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
+  notify -t "Backup" -m "Boot backup finished" -p "normal"
+}
+
+# Rotate appdata Backup function
+rotate_appdata_backups() {
+  local DIR="$1"
+  local KEEP="$2"
+  [ -z "$KEEP" ] || [ "$KEEP" -lt 1 ] && KEEP=5
+
+  # Count directories
+  local COUNT=$(ls -1d "${DIR}"/????-??-?? 2>/dev/null | wc -l)
+  if [ "$COUNT" -gt "$KEEP" ] ; then
+    local TO_DELETE=$((COUNT - KEEP))
+    ls -1d "${DIR}"/????-??-?? 2>/dev/null | sort | head -n "$TO_DELETE" | while read -r OLD_DIR ; do
+      rm -rf "$OLD_DIR"
+    done
+  fi
+}
+
+# appdata Backup function
+run_appdata_backup() {
+  if ! create_lock "appdata" ; then
+    return 1
+  fi
+
+  local SETTINGS=$(jq -r '.appdata // empty' $PLG_DIR/settings.json)
+  if [ -z "$SETTINGS" ] ; then
+    return 1
+  fi
+
+  # Read appdata source from docker.json
+  local SOURCE=$(jq -r '.appdata // empty' /boot/config/docker.json)
+  local DESTINATION=$(echo "$SETTINGS" | jq -r '.destination // empty')
+  local COMPRESSION=$(echo "$SETTINGS" | jq -r '.compression // false')
+  local BACKUPS_TO_KEEP=$(echo "$SETTINGS" | jq -r '.backups_to_keep // 2')
+  # Read exclude list and stop containers list
+  local EXCLUDE_LIST
+  EXCLUDE_LIST=$(echo "$SETTINGS" | jq -r '.exclude_dirs // [] | .[]')
+  local STOP_CONTAINERS
+  STOP_CONTAINERS=$(echo "$SETTINGS" | jq -r '.stop_containers // [] | .[]')
+
+  if [ -z "$SOURCE" ] || [ -z "$DESTINATION" ] || [ ! -d "$SOURCE" ] ; then
+    return 1
+  fi
+
+  # Create backup directory
+  local BACKUP_DIR="${DESTINATION}/$(date +%F)"
+  mkdir -p "$BACKUP_DIR"
+
+  # Set tar flags
+  local TAR_FLAGS="cf"
+  local EXT="tar"
+  if [ "$COMPRESSION" = "true" ] ; then
+    TAR_FLAGS="czf"
+    EXT="tar.gz"
+  fi
+
+  notify -t "Backup" -m "Starting appdata backup" -p "normal"
+
+  # Build a list of dirs owned by stop containers
+  declare -A STOP_CONTAINER_DIRS
+  if [ ! -z "$STOP_CONTAINERS" ] ; then
+    while IFS= read -r CNAME ; do
+      [ -z "$CNAME" ] && continue
+      # Check if container is actually running
+      local CID=$(docker ps -q --filter "name=^${CNAME}$" 2>/dev/null)
+      if [ ! -z "$CID" ] ; then
+        local MOUNTS=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{"\n"}}{{end}}{{end}}' "$CID" 2>/dev/null)
+        while IFS= read -r MOUNT_PATH ; do
+          [ -z "$MOUNT_PATH" ] && continue
+          # Check if mount is in appdata
+          if [[ "$MOUNT_PATH" == "${SOURCE}/"* ]] ; then
+            local DIR_NAME="${MOUNT_PATH#${SOURCE}/}"
+            DIR_NAME="${DIR_NAME%%/*}"
+            [ ! -z "$DIR_NAME" ] && STOP_CONTAINER_DIRS["$DIR_NAME"]=1
+          fi
+        done <<< "$MOUNTS"
+      fi
+    done <<< "$STOP_CONTAINERS"
+  fi
+
+  # Backup all not excluded and no stop container dirs first
+  local DIRECTORIES=$(cd "$SOURCE" && find . -maxdepth 1 -type d ! -name '.' -printf '%f\n' | sort)
+  local BACKED_UP=0
+  local SKIPPED=0
+
+  while IFS= read -r DIR_NAME ; do
+    [ -z "$DIR_NAME" ] && continue
+
+    # Check if excluded
+    local EXCLUDED=false
+    if [ ! -z "$EXCLUDE_LIST" ] ; then
+      while IFS= read -r EXCL ; do
+        if [ "$DIR_NAME" = "$EXCL" ] ; then
+          EXCLUDED=true
+          break
+        fi
+      done <<< "$EXCLUDE_LIST"
+    fi
+    if [ "$EXCLUDED" = true ] ; then
+      SKIPPED=$((SKIPPED + 1))
+      continue
+    fi
+
+    # Skip dirs that belong to stop containers
+    if [ ! -z "${STOP_CONTAINER_DIRS[$DIR_NAME]+x}" ] ; then
+      continue
+    fi
+
+    tar ${TAR_FLAGS} "${BACKUP_DIR}/${DIR_NAME}.${EXT}" -C "$SOURCE" "$DIR_NAME" 2>/dev/null
+    BACKED_UP=$((BACKED_UP + 1))
+  done <<< "$DIRECTORIES"
+
+  # Stop each container, backup it's dirs, start it again
+  if [ ! -z "$STOP_CONTAINERS" ] ; then
+    while IFS= read -r CNAME ; do
+      [ -z "$CNAME" ] && continue
+      local CID=$(docker ps -q --filter "name=^${CNAME}$" 2>/dev/null)
+      [ -z "$CID" ] && continue
+
+      # Get the container appdata dirs
+      local MOUNTS=$(docker inspect --format '{{range .Mounts}}{{if eq .Type "bind"}}{{.Source}}{{"\n"}}{{end}}{{end}}' "$CID" 2>/dev/null)
+      local CONTAINER_APPDATA_DIRS=""
+      while IFS= read -r MOUNT_PATH ; do
+        [ -z "$MOUNT_PATH" ] && continue
+        if [[ "$MOUNT_PATH" == "${SOURCE}/"* ]] ; then
+          local DIR_NAME="${MOUNT_PATH#${SOURCE}/}"
+          DIR_NAME="${DIR_NAME%%/*}"
+          [ ! -z "$DIR_NAME" ] && CONTAINER_APPDATA_DIRS="${CONTAINER_APPDATA_DIRS} ${DIR_NAME}"
+        fi
+      done <<< "$MOUNTS"
+
+      [ -z "$CONTAINER_APPDATA_DIRS" ] && continue
+
+      docker stop "$CNAME" >/dev/null 2>&1
+      sleep 1
+
+      for DIR_NAME in $(echo "$CONTAINER_APPDATA_DIRS" | tr ' ' '\n' | sort -u) ; do
+        [ -z "$DIR_NAME" ] && continue
+        tar ${TAR_FLAGS} "${BACKUP_DIR}/${DIR_NAME}.${EXT}" -C "$SOURCE" "$DIR_NAME" 2>/dev/null
+        BACKED_UP=$((BACKED_UP + 1))
+      done
+
+      docker start "$CNAME" >/dev/null 2>&1
+    done <<< "$STOP_CONTAINERS"
+  fi
+
+  rotate_appdata_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
+
+  local BACKUP_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | awk '{print $1}')
+  notify -t "Backup" -m "Appdata backup finished (${BACKUP_SIZE})" -p "normal"
+}
+
+# Rotate libvirt Backup function
+rotate_libvirt_backups() {
+  local DIR="$1"
+  local KEEP="$2"
+  [ -z "$KEEP" ] || [ "$KEEP" -lt 1 ] && KEEP=5
+
+  local COUNT=$(ls -1 "${DIR}"/libvirt-backup-*.tar* 2>/dev/null | wc -l)
+  if [ "$COUNT" -gt "$KEEP" ] ; then
+    local TO_DELETE=$((COUNT - KEEP))
+    ls -1 "${DIR}"/libvirt-backup-*.tar* 2>/dev/null | sort | head -n "$TO_DELETE" | while read -r FILE ; do
+      rm -f "$FILE"
+    done
+  fi
+}
+
+# libvirt Backup function
+run_libvirt_backup() {
+  if ! create_lock "libvirt" ; then
+    return 1
+  fi
+
+  local SETTINGS=$(jq -r '.libvirt // empty' $PLG_DIR/settings.json)
+  if [ -z "$SETTINGS" ] ; then
+    return 1
+  fi
+
+  local SOURCE=$(echo "$SETTINGS" | jq -r '.source // "/etc/libvirt"')
+  local DESTINATION=$(echo "$SETTINGS" | jq -r '.destination // empty')
+  local COMPRESSION=$(echo "$SETTINGS" | jq -r '.compression // false')
+  local BACKUPS_TO_KEEP=$(echo "$SETTINGS" | jq -r '.backups_to_keep // 5')
+
+  if [ -z "$DESTINATION" ] ; then
+    return 1
+  fi
+
+  mkdir -p "$DESTINATION"
+
+  local TIMESTAMP=$(date +%Y-%m-%d_%H-%M-%S)
+  local TAR_FLAGS="cf"
+  local ARCHIVE_NAME="libvirt-backup-${TIMESTAMP}.tar"
+
+  # Set tar flags
+  if [ "$COMPRESSION" = "true" ] ; then
+    TAR_FLAGS="czf"
+    ARCHIVE_NAME="libvirt-backup-${TIMESTAMP}.tar.gz"
+  fi
+
+  local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
+
+  notify -t "Backup" -m "Starting libvirt backup" -p "normal"
+
+  tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C "$SOURCE" . 2>/dev/null
+  rotate_libvirt_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
+  notify -t "Backup" -m "Libvirt backup finished" -p "normal"
+}
+
+# Run all activated backups
+run_all_backups() {
+  local ALL_SETTINGS=$(cat "$PLG_DIR/settings.json" 2>/dev/null)
+  local PIDS=""
+  local FAILED=0
+
+  # boot Backup, check if destination is set
+  local BOOT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.boot.destination // empty')
+  if [ ! -z "$BOOT_DEST" ] ; then
+    (
+      source "$PLG_DIR/functions" 2>/dev/null
+      run_boot_backup
+    ) &
+    PIDS="$PIDS $!"
+  fi
+
+  # appdata Backup, check if destination is set and docker dir exists
+  local APPDATA_DEST=$(echo "$ALL_SETTINGS" | jq -r '.appdata.destination // empty')
+  local APPDATA_SRC=$(jq -r '.appdata // empty' /boot/config/docker.json)
+  if [ ! -z "$APPDATA_DEST" ] && [ ! -z "$APPDATA_SRC" ] ; then
+    (
+      source "$PLG_DIR/functions" 2>/dev/null
+      run_appdata_backup
+    ) &
+    PIDS="$PIDS $!"
+  fi
+
+  # libvrit Backup, check if destination directory is set
+  local LIBVIRT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.libvirt.destination // empty')
+  if [ ! -z "$LIBVIRT_DEST" ] ; then
+    (
+      source "$PLG_DIR/functions" 2>/dev/null
+      run_libvirt_backup
+    ) &
+    PIDS="$PIDS $!"
+  fi
+
+  if [ -z "$PIDS" ] ; then
+    return 1
+  fi
+
+  # Wait for backups to finish
+  for PID in $PIDS ; do
+    wait "$PID" || FAILED=$((FAILED + 1))
+  done
+
+  notify -t "Backup" -m "Backup All completed" -p "normal"
+}
+
+update_schedule() {
+  /usr/local/bin/mos-cron_update
+}
+
+mos_start() {
+  /usr/local/bin/mos-cron_update
+}
+
+uninstall() {
+  rm -f "$PLG_DIR/settings.json" "/var/run/mos-backup-boot.pid" "/var/run/mos-backup-appdata.pid" "/var/run/mos-backup-libvirt.pid"
+  /usr/local/bin/mos-cron_update
+}
