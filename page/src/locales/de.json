@@ -23,7 +23,7 @@
     "refresh_dirs": "Aktualisieren",
     "no_dirs_hint": "Aktualisieren klicken um verfügbare Verzeichnisse zu laden",
     "backup_all": "Alles sichern",
-    "backup_all_hint": "Führt alle konfigurierten Backup-Typen parallel aus",
+    "backup_all_hint": "Führt alle konfigurierten Backup-Typen nacheinander aus",
     "backup_now": "Jetzt sichern",
     "backup_running": "Backup läuft...",
     "select_directory": "Verzeichnis auswählen",

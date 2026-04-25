@@ -23,7 +23,7 @@
     "refresh_dirs": "Refresh",
     "no_dirs_hint": "Click refresh to load available directories",
     "backup_all": "Backup All",
-    "backup_all_hint": "Runs all configured backup types in parallel",
+    "backup_all_hint": "Runs all configured backup types sequentially",
     "backup_now": "Backup Now",
     "backup_running": "Backup is running...",
     "select_directory": "Select Directory",
