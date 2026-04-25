@@ -47,7 +47,7 @@ case "$1" in
       echo -n "\"${DIRS[$i]}\""
     done
     echo "]"
-    ;;
+  ;;
 
   --containers)
     SOURCE=$(jq -r '.appdata // empty' "/boot/config/docker.json" 2>/dev/null)
@@ -82,10 +82,25 @@ case "$1" in
       echo -n "\"${SORTED[$i]}\""
     done
     echo "]"
-    ;;
-
-  *)
-    echo "{\"error\": \"Unknown argument: $1. Use --status, --appdata-dirs or --containers\"}"
-    exit 1
-    ;;
+  ;;
+  --run-all)
+    VERSION=$(jq -r '.tag' /boot/optional/plugins/backup/template.json)
+    source "/boot/optional/plugins/backup/$VERSION/functions"
+    run_all_backups
+  ;;
+  --run-boot)
+    VERSION=$(jq -r '.tag' /boot/optional/plugins/backup/template.json)
+    source "/boot/optional/plugins/backup/$VERSION/functions"
+    run_boot_backup
+  ;;
+  --run-appdata)
+    VERSION=$(jq -r '.tag' /boot/optional/plugins/backup/template.json)
+    source "/boot/optional/plugins/backup/$VERSION/functions"
+    run_appdata_backup
+  ;;
+  --run_libvirt)
+    VERSION=$(jq -r '.tag' /boot/optional/plugins/backup/template.json)
+    source "/boot/optional/plugins/backup/$VERSION/functions"
+    run_libvirt_backup
+  ;;
 esac
