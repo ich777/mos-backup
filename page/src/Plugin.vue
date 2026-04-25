@@ -605,7 +605,6 @@ const saveSettings = async () => {
       body: JSON.stringify({
         plugin: PLUGIN_NAME,
         function: 'update_schedule',
-        name: 'Update Backup Schedule',
       }),
     });
   } catch (e) {
@@ -726,7 +725,6 @@ const runBackup = async (functionName, displayName, section) => {
       body: JSON.stringify({
         plugin: PLUGIN_NAME,
         function: functionName,
-        name: displayName,
       }),
     });
 
@@ -764,7 +762,6 @@ const runAllBackups = async () => {
       body: JSON.stringify({
         plugin: PLUGIN_NAME,
         function: 'run_all_backups',
-        name: 'Backup All',
       }),
     });
 
