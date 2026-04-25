@@ -1,0 +1,104 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - '[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '0.0.1'
+        required: true
+        default: '0.0.1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "Building version: $VERSION"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Build Vue plugin
+        working-directory: page
+        env:
+          PLUGIN_VERSION: ${{ steps.version.outputs.VERSION }}
+        run: npm install && npm run build
+
+      - name: Create package structure
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_NAME="backup-${VERSION}-1+mos-plugin"
+          PKG_DIR="${PKG_NAME}_all"
+
+          mkdir -p ${PKG_DIR}/var/www/mos-plugins/backup
+          mkdir -p ${PKG_DIR}/usr/bin/plugins
+          mkdir -p ${PKG_DIR}/DEBIAN
+
+          # Copy over mos_backup and make it executable
+          cp mos_backup ${PKG_DIR}/usr/bin/plugins/mos_backup
+          chmod +x ${PKG_DIR}/usr/bin/plugins/mos_backup
+
+          cp -R page/dist/backup/* ${PKG_DIR}/var/www/mos-plugins/backup/
+
+          cat > ${PKG_DIR}/DEBIAN/control << EOF
+          Package: mos-backup-plugin
+          Version: ${VERSION}-1+mos-plugin
+          Architecture: all
+          Maintainer: admin@mos-official.net
+          Description: Backup Plugin for MOS
+          EOF
+
+          cat > ${PKG_DIR}/DEBIAN/postinst << 'EOF'
+          #!/bin/bash
+          exit 0
+          EOF
+          chmod +x ${PKG_DIR}/DEBIAN/postinst
+
+          cat > ${PKG_DIR}/DEBIAN/postrm << 'EOF'
+          #!/bin/bash
+          exit 0
+          EOF
+          chmod +x ${PKG_DIR}/DEBIAN/postrm
+
+      - name: Build .deb package
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          PKG_NAME="backup-${VERSION}-1+mos-plugin"
+          PKG_DIR="${PKG_NAME}_all"
+          DEB_FILE="${PKG_NAME}_all.deb"
+
+          dpkg-deb --build ${PKG_DIR}
+
+          md5sum ${DEB_FILE} | awk '{print $1}' > ${DEB_FILE}.md5
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: MOS Backup Plugin ${{ steps.version.outputs.VERSION }}
+          body: |
+            Backup Plugin ${{ steps.version.outputs.VERSION }}
+
+          files: |
+            backup-${{ steps.version.outputs.VERSION }}-1+mos-plugin_all.deb*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
