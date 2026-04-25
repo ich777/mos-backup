@@ -75,7 +75,6 @@ run_boot_backup() {
 
     local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
 
-    sleep 3
     notify -t "Backup" -m "Starting boot backup" -p "normal"
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C / boot 2>/dev/null
@@ -140,7 +139,6 @@ run_appdata_backup() {
       EXT="tar.gz"
     fi
 
-    sleep 3
     notify -t "Backup" -m "Starting appdata backup" -p "normal"
 
     # Build a list of dirs owned by stop containers
@@ -289,7 +287,6 @@ run_libvirt_backup() {
 
     local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
 
-    sleep 3
     notify -t "Backup" -m "Starting libvirt backup" -p "normal"
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C "$SOURCE" . 2>/dev/null
