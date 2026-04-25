@@ -334,6 +334,10 @@ run_all_backups() {
   sleep 1
 }
 
+update_schedule() {
+  /usr/local/bin/mos-cron_update
+}
+
 mos_start() {
   /usr/local/bin/mos-cron_update
 }
