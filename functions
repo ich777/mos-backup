@@ -79,7 +79,9 @@ run_boot_backup() {
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C / boot 2>/dev/null
     rotate_boot_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
-    notify -t "Backup" -m "Boot backup finished" -p "normal"
+
+    local BACKUP_SIZE=$(du -sh "$ARCHIVE_PATH" 2>/dev/null | awk '{print $1}')
+    notify -t "Backup" -m "Boot backup finished (${BACKUP_SIZE})" -p "normal"
   ) &
   sleep 1
 }
@@ -291,7 +293,9 @@ run_libvirt_backup() {
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C "$SOURCE" . 2>/dev/null
     rotate_libvirt_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
-    notify -t "Backup" -m "Libvirt backup finished" -p "normal"
+
+    local BACKUP_SIZE=$(du -sh "$ARCHIVE_PATH" 2>/dev/null | awk '{print $1}')
+    notify -t "Backup" -m "Libvirt backup finished (${BACKUP_SIZE})" -p "normal"
   ) &
   sleep 1
 }
@@ -325,10 +329,6 @@ run_all_backups() {
       run_libvirt_backup
       wait $! 2>/dev/null
       RAN=$((RAN + 1))
-    fi
-
-    if [ "$RAN" -gt 0 ] ; then
-      notify -t "Backup" -m "All backups completed" -p "normal"
     fi
   ) &
   sleep 1
