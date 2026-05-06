@@ -3,7 +3,7 @@ export default {
   displayName: 'Backup',
   description: 'Backup management for boot, appdata, LXC and VM',
   version: '0.0.1',
-  icon: 'mdi-backup-restore',
+  icon: '',
   author: 'ich777',
   homepage: '',
   widget: false,
