@@ -30,6 +30,10 @@ jobs:
           echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
           echo "Building version: $VERSION"
 
+
+      - name: Download icon
+        run: wget -O icon.png "https://raw.githubusercontent.com/ich777/mos-templates/master/images/mos-backup.png"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -56,6 +60,8 @@ jobs:
           chmod +x ${PKG_DIR}/usr/bin/plugins/mos_backup
 
           cp -R page/dist/backup/* ${PKG_DIR}/var/www/mos-plugins/backup/
+
+          cp icon.png ${PKG_DIR}/var/www/mos-plugins/backup/
 
           cat > ${PKG_DIR}/DEBIAN/control << EOF
           Package: mos-backup-plugin
