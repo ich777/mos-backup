@@ -26,6 +26,26 @@ create_lock() {
   return 0
 }
 
+# Check if service is available for backup
+check_service() {
+  local TYPE="$1"
+  case "$TYPE" in
+    boot)
+      [ -d "/boot" ] && [ "$(ls -A /boot 2>/dev/null)" ]
+      return $?
+    ;;
+    appdata)
+      local SRC=$(jq -r '.appdata // empty' /boot/config/docker.json)
+      [ -d "$SRC" ] && [ "$(ls -A "$SRC" 2>/dev/null)" ]
+      return $?
+    ;;
+    libvirt)
+      jq -e '.enabled == true' /boot/config/vm.json >/dev/null 2>&1
+      return $?
+    ;;
+  esac
+}
+
 # Rotate boot Backup function
 rotate_boot_backups() {
   local DIR="$1"
@@ -306,26 +326,28 @@ run_all_backups() {
     local ALL_SETTINGS=$(cat "$PLG_DIR/settings.json" 2>/dev/null)
     local RAN=0
 
-    # boot Backup, check if destination is set
+    # boot Backup, check if destination is set and boot is available
     local BOOT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.boot.destination // empty')
-    if [ ! -z "$BOOT_DEST" ] ; then
+    if [ ! -z "$BOOT_DEST" ] && check_service "boot" ; then
+      notify -t "Backup" -m "Starting boot backup" -p "normal"
       run_boot_backup
       wait $! 2>/dev/null
       RAN=$((RAN + 1))
     fi
 
-    # appdata Backup, check if destination is set and docker dir exists
+    # appdata Backup, check if destination is set and appdata is available
     local APPDATA_DEST=$(echo "$ALL_SETTINGS" | jq -r '.appdata.destination // empty')
-    local APPDATA_SRC=$(jq -r '.appdata // empty' /boot/config/docker.json)
-    if [ ! -z "$APPDATA_DEST" ] && [ ! -z "$APPDATA_SRC" ] ; then
+    if [ ! -z "$APPDATA_DEST" ] && check_service "appdata" ; then
+      notify -t "Backup" -m "Starting appdata backup" -p "normal"
       run_appdata_backup
       wait $! 2>/dev/null
       RAN=$((RAN + 1))
     fi
 
-    # libvirt Backup, check if destination directory is set
+    # libvirt Backup, check if destination is set and libvirt is enabled
     local LIBVIRT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.libvirt.destination // empty')
-    if [ ! -z "$LIBVIRT_DEST" ] ; then
+    if [ ! -z "$LIBVIRT_DEST" ] && check_service "libvirt" ; then
+      notify -t "Backup" -m "Starting libvirt backup" -p "normal"
       run_libvirt_backup
       wait $! 2>/dev/null
       RAN=$((RAN + 1))
