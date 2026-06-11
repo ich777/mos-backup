@@ -95,13 +95,19 @@ run_boot_backup() {
 
     local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
 
-    notify -t "Backup" -m "Starting boot backup" -p "normal"
+    if [ -z "$MOS_BACKUP_ALL" ] ; then
+      notify -t "Backup" -m "Starting boot backup" -p "normal"
+    fi
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C / boot 2>/dev/null
     rotate_boot_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
 
     local BACKUP_SIZE=$(du -sh "$ARCHIVE_PATH" 2>/dev/null | awk '{print $1}')
-    notify -t "Backup" -m "Boot backup finished (${BACKUP_SIZE})" -p "normal"
+    if [ ! -z "$MOS_BACKUP_ALL" ] ; then
+      echo "Boot: ${BACKUP_SIZE}"
+    else
+      notify -t "Backup" -m "Boot backup finished (${BACKUP_SIZE})" -p "normal"
+    fi
   ) &
   sleep 1
 }
@@ -161,7 +167,9 @@ run_appdata_backup() {
       EXT="tar.gz"
     fi
 
-    notify -t "Backup" -m "Starting appdata backup" -p "normal"
+    if [ -z "$MOS_BACKUP_ALL" ] ; then
+      notify -t "Backup" -m "Starting appdata backup" -p "normal"
+    fi
 
     # Build a list of dirs owned by stop containers
     declare -A STOP_CONTAINER_DIRS
@@ -254,7 +262,11 @@ run_appdata_backup() {
     rotate_appdata_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
 
     local BACKUP_SIZE=$(du -sh "$BACKUP_DIR" 2>/dev/null | awk '{print $1}')
-    notify -t "Backup" -m "Appdata backup finished (${BACKUP_SIZE})" -p "normal"
+    if [ ! -z "$MOS_BACKUP_ALL" ] ; then
+      echo "Appdata: ${BACKUP_SIZE}"
+    else
+      notify -t "Backup" -m "Appdata backup finished (${BACKUP_SIZE})" -p "normal"
+    fi
   ) &
   sleep 1
 }
@@ -309,13 +321,19 @@ run_libvirt_backup() {
 
     local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
 
-    notify -t "Backup" -m "Starting libvirt backup" -p "normal"
+    if [ -z "$MOS_BACKUP_ALL" ] ; then
+      notify -t "Backup" -m "Starting libvirt backup" -p "normal"
+    fi
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C "$SOURCE" . 2>/dev/null
     rotate_libvirt_backups "$DESTINATION" "$BACKUPS_TO_KEEP"
 
     local BACKUP_SIZE=$(du -sh "$ARCHIVE_PATH" 2>/dev/null | awk '{print $1}')
-    notify -t "Backup" -m "Libvirt backup finished (${BACKUP_SIZE})" -p "normal"
+    if [ ! -z "$MOS_BACKUP_ALL" ] ; then
+      echo "Libvirt: ${BACKUP_SIZE}"
+    else
+      notify -t "Backup" -m "Libvirt backup finished (${BACKUP_SIZE})" -p "normal"
+    fi
   ) &
   sleep 1
 }
@@ -324,33 +342,47 @@ run_libvirt_backup() {
 run_all_backups() {
   (
     local ALL_SETTINGS=$(cat "$PLG_DIR/settings.json" 2>/dev/null)
+    local SUMMARY=""
     local RAN=0
+
+    # Tell the single backups to stay quiet and report their size on stdout
+    export MOS_BACKUP_ALL=true
+
+    notify -t "Backup" -m "Starting backup for all enabled services" -p "normal"
 
     # boot Backup, check if destination is set and boot is available
     local BOOT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.boot.destination // empty')
     if [ ! -z "$BOOT_DEST" ] && check_service "boot" ; then
-      notify -t "Backup" -m "Starting boot backup" -p "normal"
-      run_boot_backup
-      wait $! 2>/dev/null
+      local LINE=$(run_boot_backup)
+      [ ! -z "$LINE" ] && SUMMARY="${SUMMARY:+$SUMMARY | }${LINE}"
       RAN=$((RAN + 1))
     fi
 
     # appdata Backup, check if destination is set and appdata is available
     local APPDATA_DEST=$(echo "$ALL_SETTINGS" | jq -r '.appdata.destination // empty')
     if [ ! -z "$APPDATA_DEST" ] && check_service "appdata" ; then
-      notify -t "Backup" -m "Starting appdata backup" -p "normal"
-      run_appdata_backup
-      wait $! 2>/dev/null
+      local LINE=$(run_appdata_backup)
+      [ ! -z "$LINE" ] && SUMMARY="${SUMMARY:+$SUMMARY | }${LINE}"
       RAN=$((RAN + 1))
     fi
 
     # libvirt Backup, check if destination is set and libvirt is enabled
     local LIBVIRT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.libvirt.destination // empty')
     if [ ! -z "$LIBVIRT_DEST" ] && check_service "libvirt" ; then
-      notify -t "Backup" -m "Starting libvirt backup" -p "normal"
-      run_libvirt_backup
-      wait $! 2>/dev/null
+      local LINE=$(run_libvirt_backup)
+      [ ! -z "$LINE" ] && SUMMARY="${SUMMARY:+$SUMMARY | }${LINE}"
       RAN=$((RAN + 1))
+    fi
+
+    # Single summary over all backed up services
+    if [ "$RAN" -gt 0 ] ; then
+      if [ ! -z "$SUMMARY" ] ; then
+        notify -t "Backup" -m "All backups finished: ${SUMMARY}" -p "normal"
+      else
+        notify -t "Backup" -m "All backups finished" -p "normal"
+      fi
+    else
+      notify -t "Backup" -m "No enabled services to back up" -p "normal"
     fi
   ) &
   sleep 1
