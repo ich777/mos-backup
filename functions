@@ -96,7 +96,7 @@ run_boot_backup() {
     local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
 
     if [ -z "$MOS_BACKUP_ALL" ] ; then
-      notify -t "Backup" -m "Starting boot backup" -p "normal"
+      notify -t "Backup" -m "Starting boot backup" -p "info"
     fi
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C / boot 2>/dev/null
@@ -168,7 +168,7 @@ run_appdata_backup() {
     fi
 
     if [ -z "$MOS_BACKUP_ALL" ] ; then
-      notify -t "Backup" -m "Starting appdata backup" -p "normal"
+      notify -t "Backup" -m "Starting appdata backup" -p "info"
     fi
 
     # Build a list of dirs owned by stop containers
@@ -322,7 +322,7 @@ run_libvirt_backup() {
     local ARCHIVE_PATH="${DESTINATION}/${ARCHIVE_NAME}"
 
     if [ -z "$MOS_BACKUP_ALL" ] ; then
-      notify -t "Backup" -m "Starting libvirt backup" -p "normal"
+      notify -t "Backup" -m "Starting libvirt backup" -p "info"
     fi
 
     tar ${TAR_FLAGS} "${ARCHIVE_PATH}" -C "$SOURCE" . 2>/dev/null
@@ -348,7 +348,7 @@ run_all_backups() {
     # Tell the single backups to stay quiet and report their size on stdout
     export MOS_BACKUP_ALL=true
 
-    notify -t "Backup" -m "Starting backup for all enabled services" -p "normal"
+    notify -t "Backup" -m "Starting backup for all enabled services" -p "info"
 
     # boot Backup, check if destination is set and boot is available
     local BOOT_DEST=$(echo "$ALL_SETTINGS" | jq -r '.boot.destination // empty')
@@ -382,7 +382,7 @@ run_all_backups() {
         notify -t "Backup" -m "All backups finished" -p "normal"
       fi
     else
-      notify -t "Backup" -m "No enabled services to back up" -p "normal"
+      notify -t "Backup" -m "No enabled services to back up" -p "info"
     fi
   ) &
   sleep 1
